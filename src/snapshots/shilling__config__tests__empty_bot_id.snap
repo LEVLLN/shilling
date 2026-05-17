@@ -1,0 +1,9 @@
+---
+source: src/config.rs
+expression: builder.build()
+---
+Err(
+    EmptyField(
+        "bot_id",
+    ),
+)

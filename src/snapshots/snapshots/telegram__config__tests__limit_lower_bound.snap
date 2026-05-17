@@ -1,0 +1,30 @@
+---
+source: src/config.rs
+expression: builder.build()
+---
+Ok(
+    Config {
+        url: Url {
+            scheme: "https",
+            cannot_be_a_base: false,
+            username: "",
+            password: None,
+            host: Some(
+                Domain(
+                    "api.telegram.org",
+                ),
+            ),
+            port: None,
+            path: "/12345:AAAA:bbbbb/",
+            query: None,
+            fragment: None,
+        },
+        get_updates_timeout: 50,
+        get_updates_limit: 1,
+        allowed_updates: [
+            "message",
+            "edited_message",
+            "callback_query",
+        ],
+    },
+)

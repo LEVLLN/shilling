@@ -1,0 +1,9 @@
+---
+source: src/config.rs
+expression: builder.build()
+---
+Err(
+    InvalidGetUpdatesLimit(
+        0,
+    ),
+)

@@ -1,0 +1,29 @@
+---
+source: src/telegram/config.rs
+expression: scenario_builder(scenario).build()
+---
+Ok(
+    Config {
+        url: Url {
+            scheme: "https",
+            cannot_be_a_base: false,
+            username: "",
+            password: None,
+            host: Some(
+                Domain(
+                    "example.com",
+                ),
+            ),
+            port: None,
+            path: "/12345:AAAA:bbbbb/",
+            query: None,
+            fragment: None,
+        },
+        get_updates_timeout: 30,
+        get_updates_limit: 50,
+        allowed_updates: [
+            "message",
+            "callback_query",
+        ],
+    },
+)

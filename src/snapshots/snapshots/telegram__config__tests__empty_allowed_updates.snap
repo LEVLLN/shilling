@@ -1,0 +1,7 @@
+---
+source: src/config.rs
+expression: builder.build()
+---
+Err(
+    InvalidAllowedUpdates,
+)

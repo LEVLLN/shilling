@@ -1,0 +1,7 @@
+---
+source: src/telegram/config.rs
+expression: scenario_builder(scenario).build()
+---
+Err(
+    InvalidAllowedUpdates,
+)

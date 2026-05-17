@@ -1,0 +1,9 @@
+---
+source: src/telegram/config.rs
+expression: scenario_builder(scenario).build()
+---
+Err(
+    InvalidGetUpdatesTimeout(
+        -1,
+    ),
+)
