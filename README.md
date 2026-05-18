@@ -2,6 +2,12 @@
 
 A minimal, typed Telegram Bot API client in Rust focused on long-polling, structured updates, and reliable outgoing calls.
 
+## Philosophy
+
+`shilling` does not try to be a flagship Telegram Bot API binding — those already exist and cover the full API surface excellently. My take is different. The Bot API has been piled high with features over the years, and the libraries chasing that surface grow accordingly. This crate settles on the minimal, time-tested core: pull a message off the long-polling stream, do something with it, send a reply. That's the loop and that's the library.
+
+Bot commands (`/start`, `/help`, …) are intentionally not modeled. Nothing beats letting the user type natural text; if you need command routing, write it in your handler.
+
 ## Name
 
 The crate is named after **Pavel Lvovich Schilling** (1786–1837), a Russian scientist and diplomat who built the first practical **electromagnetic telegraph** in 1832 — the earliest device to transmit coded messages over a wire and the conceptual ancestor of every messaging protocol that followed, Telegram included.
