@@ -29,6 +29,16 @@ const BASE_BACKOFF: Duration = Duration::from_millis(200);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 const TERMINATED_BY_OTHER_GETUPDATES: &str = "Conflict: terminated by other getUpdates request";
+const WEBHOOK_IS_ACTIVE: &str = "can't use getUpdates method while webhook is active";
+
+/// Reason why `getUpdates` is rejected with a Bot API conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GetUpdatesConflict {
+    /// Another `getUpdates` consumer is polling the same bot.
+    OtherConsumer,
+    /// A webhook is registered, so `getUpdates` is unavailable until it is deleted.
+    WebhookActive,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -60,14 +70,33 @@ pub enum ClientError {
 }
 
 impl ClientError {
+    /// Which Bot API conflict blocks `getUpdates`, if any.
+    ///
+    /// Matches by description substring rather than HTTP code 409, since the code alone
+    /// does not tell a competing consumer apart from a registered webhook.
+    #[must_use]
+    pub fn get_updates_conflict(&self) -> Option<GetUpdatesConflict> {
+        match self {
+            ClientError::Api { description, .. }
+                if description.contains(TERMINATED_BY_OTHER_GETUPDATES) =>
+            {
+                Some(GetUpdatesConflict::OtherConsumer)
+            }
+            ClientError::Api { description, .. } if description.contains(WEBHOOK_IS_ACTIVE) => {
+                Some(GetUpdatesConflict::WebhookActive)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether this error is the Telegram Bot API conflict signaling that another
     /// `getUpdates` consumer is currently active for the same bot.
-    ///
-    /// Matches by description substring rather than HTTP code 409, since 409 is also
-    /// returned for unrelated conflicts (e.g. an active webhook).
     #[must_use]
     pub fn is_terminated_by_other_getupdates(&self) -> bool {
-        matches!(self, ClientError::Api { description, .. } if description.contains(TERMINATED_BY_OTHER_GETUPDATES))
+        matches!(
+            self.get_updates_conflict(),
+            Some(GetUpdatesConflict::OtherConsumer)
+        )
     }
 }
 
@@ -499,6 +528,40 @@ mod tests {
             retry_after: None,
         };
         assert_eq!(err.is_terminated_by_other_getupdates(), expected);
+    }
+
+    #[rstest]
+    #[case::other_consumer(
+        "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running",
+        Some(GetUpdatesConflict::OtherConsumer)
+    )]
+    #[case::webhook(
+        "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first",
+        Some(GetUpdatesConflict::WebhookActive)
+    )]
+    #[case::unauthorized("Unauthorized", None)]
+    #[case::empty("", None)]
+    fn get_updates_conflict_matches_description(
+        #[case] description: &str,
+        #[case] expected: Option<GetUpdatesConflict>,
+    ) {
+        let err = ClientError::Api {
+            method: "getUpdates",
+            code: 409,
+            description: description.to_string(),
+            retry_after: None,
+        };
+        assert_eq!(err.get_updates_conflict(), expected);
+    }
+
+    #[test]
+    fn get_updates_conflict_ignores_non_api_errors() {
+        let err = ClientError::Http {
+            method: "getUpdates",
+            status: 409,
+            body: "Conflict: can't use getUpdates method while webhook is active".to_string(),
+        };
+        assert_eq!(err.get_updates_conflict(), None);
     }
 
     #[test]

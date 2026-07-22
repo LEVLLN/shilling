@@ -1,6 +1,6 @@
 [package]
 name = "shilling"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Lev Kudryashov <lev.kudryashov1994@gmail.com>"]
 description = "Typed Telegram Bot API client with long-polling, retries, and structured updates. Named after Pavel L. Schilling, inventor of the first electromagnetic telegraph (1832)."

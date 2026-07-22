@@ -4,7 +4,7 @@ use shilling::long_polling::run_long_polling;
 
 #[must_use]
 async fn handle_update(update: Update, message: &str) {
-    println!("Hello from update: {:?}", &update);
+    println!("Hello from update: {:?}", update);
     println!("External data from params: {}", message);
 }
 
