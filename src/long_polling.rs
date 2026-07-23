@@ -10,6 +10,25 @@ const ERROR_BACKOFF_BASE: Duration = Duration::from_secs(1);
 const ERROR_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const ERROR_BACKOFF_MAX_SHIFT: u32 = 8;
 
+/// Fatal condition that terminates [`run_long_polling`].
+#[derive(Debug, thiserror::Error)]
+pub enum LongPollingError {
+    /// A webhook is registered for the bot, so `getUpdates` is refused.
+    ///
+    /// This runtime never registers a webhook, so an active one means updates are being
+    /// delivered to an endpoint outside this process: treat the token as leaked. Retrying
+    /// is pointless and would hide the incident, so polling stops instead.
+    #[error(
+        "getUpdates is blocked by an active webhook that this runtime never registers: \
+         treat the bot token as compromised. Revoke it with @BotFather, remove the webhook \
+         with deleteWebhook, then restart with the new token"
+    )]
+    WebhookActive {
+        #[source]
+        source: ClientError,
+    },
+}
+
 fn error_backoff(consecutive_failures: u32) -> Duration {
     let shift = consecutive_failures
         .saturating_sub(1)
@@ -22,10 +41,10 @@ fn error_backoff(consecutive_failures: u32) -> Duration {
 /// Recommended long-polling runtime.
 ///
 /// Pulls updates via [`get_updates`] and dispatches each accepted [`Update`] to `handler`.
-/// Survives a [`GetUpdatesConflict`] (a competing consumer during a rolling deploy, or a
-/// registered webhook) by waiting five seconds and retrying. Any other
-/// [`get_updates`] failure is logged and retried from the same offset after an exponential
-/// backoff, so a permanently failing request cannot spin the loop.
+/// Survives a competing `getUpdates` consumer (e.g. during a rolling deploy) by waiting five
+/// seconds and retrying. Any other [`get_updates`] failure is logged and retried from the
+/// same offset after an exponential backoff, so a permanently failing request cannot spin
+/// the loop.
 ///
 /// `handler` returns a future, so both async and sync user code are supported:
 ///
@@ -33,9 +52,13 @@ fn error_backoff(consecutive_failures: u32) -> Duration {
 /// - sync:  `|update| async move { do_sync(update) }`
 ///
 /// # Errors
-/// Currently never returns `Err` — the function loops forever. The `Result` return type is
-/// reserved for future fatal conditions.
-pub async fn run_long_polling<F, Fut>(config: &Config, mut handler: F) -> Result<(), ClientError>
+/// Returns [`LongPollingError::WebhookActive`] and stops polling when the Bot API reports a
+/// registered webhook — a token this runtime controls should never have one, so the loop
+/// surfaces the leak instead of retrying past it.
+pub async fn run_long_polling<F, Fut>(
+    config: &Config,
+    mut handler: F,
+) -> Result<(), LongPollingError>
 where
     F: FnMut(Update) -> Fut,
     Fut: Future<Output = ()>,
@@ -59,11 +82,9 @@ where
                         CONFLICT_BACKOFF
                     }
                     Some(GetUpdatesConflict::WebhookActive) => {
-                        tracing::warn!(
-                            consecutive_failures = consecutive_failures,
-                            "webhook is active, getUpdates is unavailable; call deleteWebhook",
-                        );
-                        CONFLICT_BACKOFF
+                        let fatal = LongPollingError::WebhookActive { source: err };
+                        tracing::error!(offset = offset, "{fatal}");
+                        return Err(fatal);
                     }
                     None => {
                         tracing::error!(
@@ -103,7 +124,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{ERROR_BACKOFF_BASE, ERROR_BACKOFF_MAX, error_backoff};
+    use super::{ERROR_BACKOFF_BASE, ERROR_BACKOFF_MAX, LongPollingError, error_backoff};
+    use crate::client::ClientError;
     use rstest::rstest;
     use std::time::Duration;
 
@@ -115,5 +137,22 @@ mod tests {
     #[case::capped_far(u32::MAX, ERROR_BACKOFF_MAX)]
     fn error_backoff_grows_and_caps(#[case] failures: u32, #[case] expected: Duration) {
         assert_eq!(error_backoff(failures), expected);
+    }
+
+    #[test]
+    fn webhook_active_error_names_the_remediation() {
+        let error = LongPollingError::WebhookActive {
+            source: ClientError::Api {
+                method: "getUpdates",
+                code: 409,
+                description: "Conflict: can't use getUpdates method while webhook is active"
+                    .to_string(),
+                retry_after: None,
+            },
+        };
+        let message = error.to_string();
+        assert!(message.contains("compromised"), "{message}");
+        assert!(message.contains("@BotFather"), "{message}");
+        assert!(message.contains("deleteWebhook"), "{message}");
     }
 }

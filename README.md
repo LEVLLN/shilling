@@ -113,6 +113,8 @@ cargo run --example send_message
 - Backoff is exponential (`200ms` base, capped at `5s`) with up to 50% jitter.
 - `429` responses honor `parameters.retry_after`.
 - `4xx` (HTTP or Bot API) are non-retryable and propagated to the caller.
+- `run_long_polling` waits `5s` on a competing `getUpdates` consumer and backs off exponentially (`1s` base, capped at `30s`) on any other failure, so a permanently failing request never spins the loop.
+- An active webhook stops `run_long_polling` with `LongPollingError::WebhookActive` instead of retrying: this runtime never registers one, so its presence means the bot token is in someone else's hands. Revoke the token with @BotFather and call `deleteWebhook`.
 
 ## Errors
 
@@ -124,6 +126,8 @@ All public client functions return `Result<_, ClientError>`. `ClientError` is ex
 | `Transport`  | Network/transport failure after retries.               |
 | `Http`       | Non-2xx HTTP outside the retry policy.                 |
 | `Api`        | Bot API returned `ok = false` (carries code and text). |
+
+`run_long_polling` returns `LongPollingError`, whose only variant is `WebhookActive` — the fatal, token-compromise condition described above.
 
 `ConfigBuilder::build` returns `TelegramConfigError` for missing credentials, malformed base URL, or out-of-range polling parameters.
 
