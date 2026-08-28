@@ -216,13 +216,18 @@ where
         .join(method)
         .map_err(|source| ClientError::Url { method, source })?;
 
+    // reqwest attaches the request URL to its errors, and ours carries the bot token in its
+    // path. Swap in the redacted twin so the error can be logged as-is.
+    let redacted_url = config.redacted_url().join(method).ok();
+
     let start = Instant::now();
     let mut attempt: u8 = 0;
     loop {
         attempt += 1;
-        let result = send_once::<Resp>(&url, body, timeout)
-            .await
-            .map_err(|err| err.into_client_error(method));
+        let result = send_once::<Resp>(&url, body, timeout).await.map_err(|err| {
+            err.redact_url(redacted_url.as_ref())
+                .into_client_error(method)
+        });
 
         match result {
             Ok(value) => {
@@ -273,6 +278,22 @@ enum AttemptError {
 }
 
 impl AttemptError {
+    /// Replace the token-bearing URL that reqwest records on transport errors.
+    ///
+    /// Drops the URL entirely when no redacted stand-in is available: an error without a URL
+    /// is still diagnosable via `method`, an error with the token in it is not loggable at all.
+    fn redact_url(self, redacted: Option<&Url>) -> Self {
+        match self {
+            AttemptError::Transport(source) if source.url().is_some() => {
+                AttemptError::Transport(match redacted {
+                    Some(url) => source.with_url(url.clone()),
+                    None => source.without_url(),
+                })
+            }
+            other => other,
+        }
+    }
+
     fn into_client_error(self, method: &'static str) -> ClientError {
         match self {
             AttemptError::Transport(source) => ClientError::Transport { method, source },
@@ -562,6 +583,24 @@ mod tests {
             body: "Conflict: can't use getUpdates method while webhook is active".to_string(),
         };
         assert_eq!(err.get_updates_conflict(), None);
+    }
+
+    /// Port 1 on localhost refuses instantly, so this exercises the real transport-error path
+    /// without reaching the network.
+    #[tokio::test]
+    async fn transport_error_never_renders_the_bot_token() {
+        let config = crate::config::ConfigBuilder::new()
+            .bot_id("12345")
+            .bot_token("s3cr3t-bot-token")
+            .base_url("http://localhost:1")
+            .build()
+            .unwrap();
+
+        let err = get_updates(&config, 0).await.unwrap_err();
+
+        let rendered = format!("{err} / {err:?}");
+        assert!(!rendered.contains("s3cr3t-bot-token"), "{rendered}");
+        assert!(rendered.contains("REDACTED"), "{rendered}");
     }
 
     #[test]

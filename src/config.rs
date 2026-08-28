@@ -1,9 +1,14 @@
+use std::fmt;
+
 use url::Url;
 
 const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
 const DEFAULT_GET_UPDATES_TIMEOUT: i8 = 50;
 const DEFAULT_GET_UPDATES_LIMIT: i32 = 100;
 const DEFAULT_ALLOWED_UPDATES: &[&str] = &["message", "edited_message", "callback_query"];
+
+/// Stands in for the bot token wherever a URL or a config is rendered for humans.
+const REDACTED_TOKEN: &str = "REDACTED";
 
 #[derive(Debug, thiserror::Error)]
 pub enum TelegramConfigError {
@@ -21,18 +26,41 @@ pub enum TelegramConfigError {
     InvalidAllowedUpdates,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     url: Url,
+    redacted_url: Url,
     get_updates_timeout: i8,
     get_updates_limit: i32,
     allowed_updates: Vec<String>,
 }
 
+/// Renders the token-free URL, so `{config:?}` in a log line cannot leak credentials.
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("url", &self.redacted_url.as_str())
+            .field("get_updates_timeout", &self.get_updates_timeout)
+            .field("get_updates_limit", &self.get_updates_limit)
+            .field("allowed_updates", &self.allowed_updates)
+            .finish()
+    }
+}
+
 impl Config {
+    /// Base URL including the bot token. Never log this; use [`Config::redacted_url`] instead.
     #[must_use]
     pub fn url(&self) -> &Url {
         &self.url
+    }
+
+    /// Same URL as [`Config::url`] with the bot token replaced by a placeholder.
+    ///
+    /// Safe to log, and structurally identical to the real URL, so it can stand in for it in
+    /// error messages without losing the scheme, host, port, or bot id.
+    #[must_use]
+    pub fn redacted_url(&self) -> &Url {
+        &self.redacted_url
     }
 
     #[must_use]
@@ -51,7 +79,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct BuilderState {
     bot_id: String,
     bot_token: String,
@@ -59,6 +87,19 @@ struct BuilderState {
     get_updates_timeout: i8,
     get_updates_limit: i32,
     allowed_updates: Vec<String>,
+}
+
+impl fmt::Debug for BuilderState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuilderState")
+            .field("bot_id", &self.bot_id)
+            .field("bot_token", &REDACTED_TOKEN)
+            .field("base_url", &self.base_url)
+            .field("get_updates_timeout", &self.get_updates_timeout)
+            .field("get_updates_limit", &self.get_updates_limit)
+            .field("allowed_updates", &self.allowed_updates)
+            .finish()
+    }
 }
 
 impl Default for BuilderState {
@@ -181,8 +222,12 @@ impl ConfigBuilder {
         let url = base
             .join(&format!("/{bot_id}:{bot_token}/"))
             .map_err(TelegramConfigError::InvalidBaseUrl)?;
+        let redacted_url = base
+            .join(&format!("/{bot_id}:{REDACTED_TOKEN}/"))
+            .map_err(TelegramConfigError::InvalidBaseUrl)?;
         Ok(Config {
             url,
+            redacted_url,
             get_updates_timeout,
             get_updates_limit,
             allowed_updates,
@@ -225,5 +270,22 @@ mod tests {
     )]
     fn build_cases(#[case] name: &str, #[case] builder: ConfigBuilder) {
         assert_debug_snapshot!(name, builder.build());
+    }
+
+    #[test]
+    fn debug_hides_the_bot_token_but_keeps_the_url_usable() {
+        let config = ConfigBuilder::new()
+            .bot_id("12345")
+            .bot_token("s3cr3t-bot-token")
+            .build()
+            .unwrap();
+
+        let rendered = format!("{config:?}");
+        assert!(!rendered.contains("s3cr3t-bot-token"), "{rendered}");
+        assert_eq!(
+            config.redacted_url().as_str(),
+            "https://api.telegram.org/12345:REDACTED/"
+        );
+        assert!(config.url().as_str().contains("s3cr3t-bot-token"));
     }
 }
